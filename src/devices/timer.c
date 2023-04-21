@@ -24,6 +24,11 @@ static int64_t ticks;
    Initialized by timer_calibrate(). */
 static unsigned loops_per_tick;
 
+/* List of sleeping processes.  Processes are added to this list
+   when they are waiting for a certain sleep ticks and removed
+   when its ticks ended*/
+static struct list sleep_list;
+
 static intr_handler_func timer_interrupt;
 static bool too_many_loops (unsigned loops);
 static void busy_wait (int64_t loops);
@@ -37,6 +42,7 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+  list_init (&sleep_list);
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -84,22 +90,33 @@ timer_elapsed (int64_t then)
   return timer_ticks () - then;
 }
 
+bool
+less(struct list_elem *elem, struct list_elem *e, void* aux UNUSED)
+{
+  struct thread *t1 = list_entry (elem, struct thread, sleepelem);
+  struct thread *t2 = list_entry (e, struct thread, sleepelem);
+  return t1->wake_tick <= t2->wake_tick;
+} 
+
 /* Sleeps for approximately TICKS timer ticks.  Interrupts must
    be turned on. */
 void
 timer_sleep (int64_t ticks) 
 {
-  // this was complete implementation, but we change it to use semaphore so timer interrupt is needed
+  if(ticks <= 0)
+    return;
+
+  enum intr_level old_level;
+  
   int64_t start = timer_ticks ();
 
-  // TODO avoid busy waiting here with queue of blocked threads and always check if you need to unblock one
-  // in sync.c there is sema_down that puts the thread in blocked queue, we can use it
-  // we sleep many thread
-  // insert sleeping threads
-  // list_insert_ordered --> by waking up time.
   ASSERT (intr_get_level () == INTR_ON);
-  while (timer_elapsed (start) < ticks) 
-    thread_yield ();
+  struct thread *t = thread_current();
+  old_level = intr_disable ();
+  t->wake_tick = start + ticks;
+  list_insert_ordered(&sleep_list, &t->sleepelem, less, NULL);
+  thread_block();
+  intr_set_level (old_level);
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -174,10 +191,28 @@ timer_print_stats (void)
 
 /* Timer interrupt handler. */
 static void
- timer_interrupt (struct intr_frame *args UNUSED)
+timer_interrupt (struct intr_frame *args UNUSED)
 {
-  ticks++; // pulse or CPU operation
+  ticks++;
   thread_tick ();
+  wakeup_threads ();
+}
+
+//handling sleep list
+void
+wakeup_threads ()
+{
+  while(!list_empty(&sleep_list)) {
+    struct list_elem *front = list_front(&sleep_list);
+    struct thread *t = list_entry (front, struct thread, sleepelem);
+    if(ticks >= t->wake_tick) {  //bigger to avoid dumb error
+      t->wake_tick = -1;
+      list_pop_front(&sleep_list);
+      thread_unblock(t);
+    }
+    else
+      break;
+  }
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
