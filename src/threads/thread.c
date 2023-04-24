@@ -157,23 +157,23 @@ handle_advanced_sch (void)
     t->recent_cpu= addN(t->recent_cpu, 1);
   if(timer_ticks () % TIMER_FREQ == 0) {
     update_load_average(t);
-    thread_foreach(update_recent_cpu, NULL);
+    thread_foreach(thread_update_recent_cpu, NULL);
   }
   if(timer_ticks() % 4 == 0) {
-    thread_foreach(update_priority, NULL);
+    thread_foreach(thread_update_priority, NULL);
   }
 }
 
 /* Updates recent cpu of all threads. */
 void
-update_recent_cpu (struct thread *t, void *aux UNUSED)
+thread_update_recent_cpu (struct thread *t, void *aux UNUSED)
 {
   t->recent_cpu = addN(mul(div(mulN(load_avg, 2), addN(mulN(load_avg, 2), 1)), t->recent_cpu), t->nice);
 }
 
 /* Updates priority. */
 void
-update_priority (struct thread *t, void *aux UNUSED)
+thread_update_priority (struct thread *t, void *aux UNUSED)
 {
   t->priority = round(sub(sub(fixed(PRI_MAX), div(t->recent_cpu, fixed(4))), mulN(fixed(t->nice), 2)));
 }
@@ -357,14 +357,14 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
-    list_insert_ordered(&ready_list, &cur->elem, mlfqs_priority, NULL);
+    list_insert_ordered(&ready_list, &cur->elem, higher_priority, NULL);
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
 }
 
 bool
-mlfqs_priority(struct list_elem *elem, struct list_elem *e, void *aux UNUSED) 
+higher_priority (struct list_elem *elem, struct list_elem *e, void *aux UNUSED) 
 {
   struct thread *t1 = list_entry (elem, struct thread, elem);
   struct thread *t2 = list_entry (e, struct thread, elem);
@@ -406,9 +406,11 @@ thread_get_priority (void)
 void
 thread_set_nice (int nice) 
 {
-  if (nice <= 20 && nice >= -20 && thread_mlfqs) {
+  if(nice <= 20 && nice >= -20 && thread_mlfqs) {
     struct thread *t = thread_current();
     t->nice = nice;
+    thread_update_priority(t, NULL);
+    thread_yield();
   }
 }
 
@@ -522,7 +524,7 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   if(thread_mlfqs)
-    update_priority(t, NULL);
+    thread_update_priority(t, NULL);
   t->wake_tick = -1;
   t->magic = THREAD_MAGIC;
 

@@ -1,6 +1,6 @@
 #include <stdint.h>
 
-#define FRACTION_BITS 16
+#define FRACTION_BITS 14
 
 real
 fixed(int num)

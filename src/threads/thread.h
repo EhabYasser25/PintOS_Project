@@ -17,13 +17,13 @@ enum thread_status
 /* Thread identifier type.
    You can redefine this to whatever type you like. */
 typedef int tid_t;
+typedef int64_t real;
 #define TID_ERROR ((tid_t) -1)          /* Error value for tid_t. */
 
 /* Thread priorities. */
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
-typedef int64_t real;
 
 /* A kernel thread or user process.
 
@@ -144,9 +144,9 @@ int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
 void handle_advanced_sch (void);
-void update_recent_cpu (struct thread *t, void *aux UNUSED);
-void update_priority (struct thread *t, void *aux UNUSED);
+void thread_update_recent_cpu (struct thread *t, void *aux UNUSED);
+void thread_update_priority (struct thread *t, void *aux UNUSED);
 void update_load_average (struct thread *t);
-bool mlfqs_priority(struct list_elem *elem, struct list_elem *e, void *aux UNUSED);
+bool higher_priority(struct list_elem *elem, struct list_elem *e, void *aux UNUSED);
 
 #endif /* threads/thread.h */
