@@ -23,6 +23,7 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+typedef int64_t real;
 
 /* A kernel thread or user process.
 
@@ -94,6 +95,8 @@ struct thread
     struct list_elem elem;              /* List element. */
     struct list_elem sleepelem;          /* Sleep element. */
     int64_t wake_tick;               /* Time to wake up the thread. */
+    real recent_cpu;                 /* The recent CPU. */
+    int nice;                     /* The thread nice value. */
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -139,5 +142,11 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+void handle_advanced_sch (void);
+void update_recent_cpu (struct thread *t, void *aux UNUSED);
+void update_priority (struct thread *t, void *aux UNUSED);
+void update_load_average (struct thread *t);
+bool mlfqs_priority(struct list_elem *elem, struct list_elem *e, void *aux UNUSED);
 
 #endif /* threads/thread.h */
