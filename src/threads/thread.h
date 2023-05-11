@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "devices/timer.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -82,7 +83,7 @@ typedef int64_t real;
    ready state is on the run queue, whereas only a thread in the
    blocked state is on a semaphore wait list. */
 struct thread
-  {
+{
     /* Owned by thread.c. */
     tid_t tid;                          /* Thread identifier. */
     enum thread_status status;          /* Thread state. */
@@ -93,10 +94,18 @@ struct thread
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
+
+   //*****************ADDED********************
     struct list_elem sleepelem;          /* Sleep element. */
     int64_t wake_tick;               /* Time to wake up the thread. */
     real recent_cpu;                 /* The recent CPU. */
-    int nice;                     /* The thread nice value. */
+    int nice;   
+
+   //*****************ADDED********************
+    struct lock *waiting_lock;
+    struct list donation_list;          // list of donations
+    struct list_elem donation_list_elem;
+    int init_priority;
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -143,10 +152,14 @@ void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
+void preempt(void);
+void donate_priority(void); /* donates the priority (priority inheritance) */
+void lock_remove (struct lock *lock); /* removes lock from donation_list */
+bool higher_priority(struct list_elem *elem, struct list_elem *e, void *aux UNUSED);
+
 void handle_advanced_sch (void);
 void thread_update_recent_cpu (struct thread *t, void *aux UNUSED);
 void thread_update_priority (struct thread *t, void *aux UNUSED);
 void update_load_average (struct thread *t);
-bool higher_priority(struct list_elem *elem, struct list_elem *e, void *aux UNUSED);
 
 #endif /* threads/thread.h */
