@@ -2,6 +2,7 @@
 
 #define FRACTION_BITS 14
 
+
 real
 fixed(int num)
 {
