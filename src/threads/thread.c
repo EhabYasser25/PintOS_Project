@@ -64,6 +64,9 @@ static unsigned thread_ticks;   /* # of timer ticks since last yield. */
    Controlled by kernel command-line option "-o mlfqs". */
 bool thread_mlfqs;
 
+/* max depth for nested donation */
+#define MAX_DEPTH 8
+
 static void kernel_thread (thread_func *, void *aux);
 
 static void idle (void *aux UNUSED);
@@ -140,8 +143,8 @@ thread_tick (void)
   else
     kernel_ticks++;
 
-  if(thread_mlfqs)
-    handle_advanced_sch();
+if(thread_mlfqs)
+  handle_advanced_sch();
 
   /* Enforce preemption. */
   if (++thread_ticks >= TIME_SLICE)
@@ -155,11 +158,11 @@ handle_advanced_sch (void)
   struct thread *t = thread_current();
   if(t != idle_thread)
     t->recent_cpu= addN(t->recent_cpu, 1);
-  if(timer_ticks () % TIMER_FREQ == 0) {
+  if(timer_ticks () % TIMER_FREQ == 0) {  //every second
     update_load_average(t);
     thread_foreach(thread_update_recent_cpu, NULL);
   }
-  if(timer_ticks() % 4 == 0) {
+  if(timer_ticks() % 4 == 0) {  //every time slice
     thread_foreach(thread_update_priority, NULL);
   }
 }
@@ -250,7 +253,19 @@ thread_create (const char *name, int priority,
   /* Add to run queue. */
   thread_unblock (t);
 
+  preempt();
+
   return tid;
+}
+
+
+/* check if the current thread has to leave the processor
+   for another ready thread with higher priority */
+void preempt(void) {
+  if (!list_empty(&ready_list)) {
+    struct thread *ready_thread = list_entry(list_front(&ready_list), struct thread, elem);
+      if ( (thread_current() -> priority) < (ready_thread -> priority) )
+        thread_yield();  }
 }
 
 /* Puts the current thread to sleep.  It will not be scheduled
@@ -286,7 +301,7 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
+  list_insert_ordered (&ready_list, &t -> elem, higher_priority, NULL);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -357,7 +372,7 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
-    list_insert_ordered(&ready_list, &cur->elem, higher_priority, NULL);
+    list_insert_ordered(&ready_list, &cur-> elem, higher_priority, NULL);
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -392,7 +407,73 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
+  // disable interrupts to prevent changing the priority of
+  // the current thread by another thread
+  enum intr_level old_level = intr_disable();
+  struct thread *current_thread = thread_current();
+  int old_priority = current_thread->priority;
+  current_thread->init_priority = new_priority;
+  current_thread->priority = new_priority;
+
+  // check if there are threads waiting on a lock held by the current thread
+  // if so, the current thread takes the priority of the highest priority
+  // thread from them(if it is higher than it)
+  if (!list_empty(&current_thread->donation_list)) {
+      struct thread *donation_thread = list_entry(list_front(&current_thread->donation_list), struct thread, donation_list_elem);
+      if ( (donation_thread->priority) > (current_thread->priority) ) {
+          current_thread->priority = donation_thread->priority;
+      }
+  }
+
+  // if the new priority is higher than the old priority, 
+  // check if it has to donate it to another waiting thread
+  if (old_priority < current_thread->priority) {
+      donate_priority();
+  }
+
+  // if the new priority is less than the old priority,
+  // check if the current thread has to leave the CPU
+  // for another ready thread with higher priority
+  if (old_priority > current_thread->priority) {
+      preempt();
+  }
+
+  intr_set_level(old_level);
+}
+
+void donate_priority(void) {
+  int depth = 0;
+  struct thread *t = thread_current();
+  struct lock *needed_lock = t->waiting_lock;
+  while (needed_lock && depth < MAX_DEPTH) {
+    // break if there is no needed lock or if the priority
+    // of the thread holding it is already higher
+    if (needed_lock->holder == NULL || (needed_lock->holder->priority) >= t->priority) {
+      break;
+    }
+    // if the priority of the holding thread is lower 
+    // then the current thread(which need the lock)
+    // donate its priority to the holding thread
+    needed_lock->holder->priority = t->priority;
+    // nested donation
+    t = needed_lock->holder;
+    needed_lock = t->waiting_lock;
+    depth++;
+  }
+}
+
+void
+lock_remove (struct lock *lock) {
+  struct list_elem *e;
+  struct thread *t;
+  // loop over the list of the waiting threads for the current thread
+  // to remove them from the donation list if there were waiting for that lock
+  for ( e = list_begin(&thread_current()->donation_list); e != list_end(&thread_current()->donation_list); e = list_next(e))
+  {
+    t = list_entry(e, struct thread, donation_list_elem);
+    if (t->waiting_lock == lock)
+      list_remove(e);
+  }
 }
 
 /* Returns the current thread's priority. */
@@ -436,7 +517,7 @@ thread_get_recent_cpu (void)
   struct thread *t = thread_current();
   return round(mulN(t->recent_cpu, 100));
 }
-
+
 /* Idle thread.  Executes when no other thread is ready to run.
 
    The idle thread is initially put on the ready list by
@@ -485,19 +566,19 @@ kernel_thread (thread_func *function, void *aux)
   function (aux);       /* Execute the thread function. */
   thread_exit ();       /* If function() returns, kill the thread. */
 }
-
+
 /* Returns the running thread. */
 struct thread *
 running_thread (void) 
 {
-  uint32_t *esp;
+    uint32_t *esp;
 
-  /* Copy the CPU's stack pointer into `esp', and then round that
-     down to the start of a page.  Because `struct thread' is
-     always at the beginning of a page and the stack pointer is
-     somewhere in the middle, this locates the curent thread. */
-  asm ("mov %%esp, %0" : "=g" (esp));
-  return pg_round_down (esp);
+    /* Copy the CPU's stack pointer into `esp', and then round that
+       down to the start of a page.  Because `struct thread' is
+       always at the beginning of a page and the stack pointer is
+       somewhere in the middle, this locates the curent thread. */
+    asm ("mov %%esp, %0" : "=g" (esp));
+    return pg_round_down (esp);
 }
 
 /* Returns true if T appears to point to a valid thread. */
@@ -524,9 +605,14 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   if(thread_mlfqs)
-    thread_update_priority(t, NULL);
+      thread_update_priority(t, NULL);
   t->wake_tick = -1;
   t->magic = THREAD_MAGIC;
+
+  // initialize the values used in priority scheduling
+  t -> waiting_lock = NULL;
+  list_init(&t -> donation_list);
+  t -> init_priority = priority;
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
@@ -642,7 +728,7 @@ allocate_tid (void)
 
   return tid;
 }
-
+
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
