@@ -571,14 +571,14 @@ kernel_thread (thread_func *function, void *aux)
 struct thread *
 running_thread (void) 
 {
-    uint32_t *esp;
+  uint32_t *esp;
 
-    /* Copy the CPU's stack pointer into `esp', and then round that
-       down to the start of a page.  Because `struct thread' is
-       always at the beginning of a page and the stack pointer is
-       somewhere in the middle, this locates the curent thread. */
-    asm ("mov %%esp, %0" : "=g" (esp));
-    return pg_round_down (esp);
+  /* Copy the CPU's stack pointer into `esp', and then round that
+     down to the start of a page.  Because `struct thread' is
+     always at the beginning of a page and the stack pointer is
+     somewhere in the middle, this locates the curent thread. */
+  asm ("mov %%esp, %0" : "=g" (esp));
+  return pg_round_down (esp);
 }
 
 /* Returns true if T appears to point to a valid thread. */
