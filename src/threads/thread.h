@@ -107,6 +107,14 @@ struct thread
     struct list_elem donation_list_elem;
     int init_priority;
 
+   //****************phase_2*******************
+   struct thread *parent;
+   struct list children_list;
+   struct list_elem child_elem;
+   struct semaphore parent_child_semaphore;
+   bool child_success;
+   //****************phase_2*******************
+
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */

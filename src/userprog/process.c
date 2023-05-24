@@ -38,10 +38,15 @@ process_execute (const char *file_name)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
 
+  struct thread *parent_thread = thread_current();//***************phase_2***************
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  //parent waits for the child
+  sema_down(&parent_thread->parent_child_semaphore);//*****************phase_2****************
+
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
+  if (!thread_current()->child_success) return TID_ERROR; //*********************phase_2********************
   return tid;
 }
 
@@ -60,6 +65,21 @@ start_process (void *file_name_)
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
+
+  //*************************************phase_2***************************
+  struct thread *child_thread = thread_current();
+  struct thread *parent_thread = child_thread->parent;
+  parent_thread->child_success = success;
+  if (!parent_thread->child_success) {
+    sema_up(&parent_thread->parent_child_semaphore);
+    //thread_exit();
+  }
+  else {
+    list_push_back(&parent_thread->children_list, &child_thread->child_elem);
+    //*******************push arguments here into stack
+    sema_up(&parent_thread->parent_child_semaphore);  //parent wake up
+    sema_down(&child_thread->parent_child_semaphore); //child sleep
+  }
 
   /* If load failed, quit. */
   palloc_free_page (file_name);
@@ -131,7 +151,7 @@ process_activate (void)
      interrupts. */
   tss_update ();
 }
-
+
 /* We load ELF binaries.  The following definitions are taken
    from the ELF specification, [ELF1], more-or-less verbatim.  */
 
@@ -315,7 +335,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   file_close (file);
   return success;
 }
-
+
 /* load() helpers. */
 
 static bool install_page (void *upage, void *kpage, bool writable);
