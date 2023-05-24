@@ -235,6 +235,14 @@ thread_create (const char *name, int priority,
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
 
+
+  //*****************phase_2*******************
+  struct thread *parent_thread = thread_current();
+  t->parent = parent_thread;
+  //************************** chld thread t will be put in children_list of parent_thread after load success ************************
+  //*****************phase_2************************
+
+
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
   kf->eip = NULL;
@@ -571,14 +579,14 @@ kernel_thread (thread_func *function, void *aux)
 struct thread *
 running_thread (void) 
 {
-  uint32_t *esp;
+    uint32_t *esp;
 
-  /* Copy the CPU's stack pointer into `esp', and then round that
-     down to the start of a page.  Because `struct thread' is
-     always at the beginning of a page and the stack pointer is
-     somewhere in the middle, this locates the curent thread. */
-  asm ("mov %%esp, %0" : "=g" (esp));
-  return pg_round_down (esp);
+    /* Copy the CPU's stack pointer into `esp', and then round that
+       down to the start of a page.  Because `struct thread' is
+       always at the beginning of a page and the stack pointer is
+       somewhere in the middle, this locates the curent thread. */
+    asm ("mov %%esp, %0" : "=g" (esp));
+    return pg_round_down (esp);
 }
 
 /* Returns true if T appears to point to a valid thread. */
@@ -613,6 +621,11 @@ init_thread (struct thread *t, const char *name, int priority)
   t -> waiting_lock = NULL;
   list_init(&t -> donation_list);
   t -> init_priority = priority;
+
+  //**********************phase_2********************
+  list_init(&t->children_list);
+  sema_init(&t->parent_child_semaphore, 0);
+  t->child_success = false;
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
