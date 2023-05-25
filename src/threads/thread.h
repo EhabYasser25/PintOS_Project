@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "devices/timer.h"
+#include "synch.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -111,8 +112,14 @@ struct thread
    struct thread *parent;
    struct list children_list;
    struct list_elem child_elem;
+   struct semaphore wait_for_child;
    struct semaphore parent_child_semaphore;
    bool child_success;
+   int child_status;
+   int exit_status;
+   struct list files_list;
+   struct file *current_file;
+   tid_t waiting_on;
    //****************phase_2*******************
 
 #ifdef USERPROG
@@ -123,6 +130,13 @@ struct thread
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };
+
+struct open_file
+{
+   int fd;
+   struct file *file;
+   struct list_elem elem;
+};
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
