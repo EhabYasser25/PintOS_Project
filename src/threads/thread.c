@@ -623,9 +623,16 @@ init_thread (struct thread *t, const char *name, int priority)
   t -> init_priority = priority;
 
   //**********************phase_2********************
-  list_init(&t->children_list);
-  sema_init(&t->parent_child_semaphore, 0);
   t->child_success = false;
+  t->current_file = NULL;
+  t->child_status = -1;
+  t->exit_status = 0;
+  t->waiting_on = -1;
+  list_init(&t->children_list);
+  list_init(&t->files_list);
+  sema_init(&t->wait_for_child, 0);
+  sema_init(&t->parent_child_semaphore, 0);
+  
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
