@@ -3,9 +3,9 @@
 #include <syscall-nr.h>
 #include "threads/interrupt.h"
 #include "threads/thread.h"
-#include "devices/shutdown.h" // halt
-#include "threads/init.h"  // halt
-#include "threads/vaddr.h" // exit
+#include "devices/shutdown.h"
+#include "threads/init.h"
+#include "threads/vaddr.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
 #include "lib/kernel/list.h"
@@ -13,112 +13,21 @@
 static void syscall_handler(struct intr_frame *);
 struct lock fileSys_lock;
 
-// declaration for added wrapper methods
-void wrapperExit(struct intr_frame *f);
-void wrapperExec(struct intr_frame *f);
-void wrapperWait(struct intr_frame *f);
-void wrapperCreate(struct intr_frame *f);
-void wrapperRemove(struct intr_frame *f);
-void wrapperOpen(struct intr_frame *f);
-void wrapperFilesize(struct intr_frame *f);
-void wrapperRead(struct intr_frame *f);
-void wrapperWrite(struct intr_frame *f);
-void wrapperClose(struct intr_frame *f);
+// checking validation of virtual memory
+bool valid_user_space_adrress(void *val) {
+  return val != NULL && is_user_vaddr(val) && pagedir_get_page(thread_current()->pagedir, val) != NULL;
+}
 
-// check validation
-bool valid_in_virtual_memory(void *val);
-bool valid_esp(struct intr_frame *f);
+// check validation of stack pointer
+bool valid_stack_ptr(struct intr_frame *f) {
+  return valid_user_space_adrress ((int *)f->esp) || ((*(int *)f->esp) < 0) || (*(int *)f->esp) > 12;
+}
 
-void syscall_init(void)
-{
+void syscall_init(void) {
   intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall");
   lock_init(&fileSys_lock);
 }
 
-static void
-syscall_handler(struct intr_frame *f UNUSED)
-{
-  if (!valid_esp(f))
-  {
-    sys_exit(-1);
-  }
-  // switch to system calls
-  switch (*(int *)f->esp)
-  {
-  case SYS_HALT:
-  {
-    sys_halt();
-    break;
-  }
-  case SYS_EXIT:
-  {
-    wrapperExit(f);
-    break;
-  }
-  case SYS_EXEC:
-  {
-    wrapperExec(f);
-    break;
-  }
-  case SYS_WAIT:
-  {
-    wrapperWait(f);
-    break;
-  }
-  case SYS_CREATE:
-  {
-    wrapperCreate(f);
-    break;
-  }
-  case SYS_REMOVE:
-  {
-    wrapperRemove(f);
-    break;
-  }
-  case SYS_OPEN:
-  {
-    wrapperOpen(f);
-    break;
-  }
-  case SYS_FILESIZE:
-  {
-    wrapperFilesize(f);
-    break;
-  }
-  case SYS_READ:
-  {
-    wrapperRead(f);
-    break;
-  }
-  case SYS_WRITE:
-  {
-    wrapperWrite(f);
-    break;
-  }
-  case SYS_SEEK:
-  {
-    sys_seek(f);
-    break;
-  }
-  case SYS_TELL:
-  {
-    sys_tell(f);
-    break;
-  }
-  case SYS_CLOSE:
-  {
-    wrapperClose(f);
-    break;
-  } 
-  default:
-  {
-    sys_exit(-1);
-    break;
-  }
-  }
-}
-
-// added methods for system calls
 void 
 sys_halt()
 {
@@ -126,7 +35,7 @@ sys_halt()
   shutdown_power_off();
 }
 
-void 
+void
 sys_exit(int status)
 {
   char* name = thread_current()->name;
@@ -137,7 +46,8 @@ sys_exit(int status)
   thread_exit();
 }
 
-tid_t  sys_wait(tid_t tid)
+tid_t
+sys_wait(tid_t tid)
 {
   return process_wait(tid);
 }
@@ -170,17 +80,12 @@ sys_open(const char *file)
   struct file *o_file = filesys_open(file);
   lock_release(&fileSys_lock);
 
-  if (o_file == NULL)
-  { 
-    return -1;  // fail
-  }
-  else
-  {
+  if (o_file != NULL) { 
     struct open_file *user_file = (struct open_file *)malloc(sizeof(struct open_file));
     int file_fd = cur_fd;
     user_file->fd = cur_fd;
     user_file->file = o_file;
-    
+  
     lock_acquire(&fileSys_lock);
     cur_fd++;
     lock_release(&fileSys_lock);
@@ -188,6 +93,7 @@ sys_open(const char *file)
     list_push_back(&thread_current()->files_list, elem);
     return file_fd;
   }
+  else return -1;
 }
 
 /* searching the list of open files associated with the current thread to find an open_file 
@@ -196,15 +102,11 @@ it returns the pointer to the structure; otherwise, it returns NULL */
 struct 
 open_file *sys_file(int fd)
 {
-  // struct open_file *i = NULL;
   struct list *files = &(thread_current()->files_list);
   for (struct list_elem *cur = list_begin(files); cur != list_end(files); cur = list_next(cur))
   {
     struct open_file *cur_file = list_entry(cur, struct open_file, elem);
-    if ((cur_file->fd) == fd)
-    {
-      return cur_file;
-    }
+    if ((cur_file->fd) == fd) return cur_file;
   }
   return NULL;
 }
@@ -214,7 +116,7 @@ sys_read(int fd, void *buffer, unsigned size)
 {
   int i = size;
   if (fd == 0)
-  { 
+  {
     while (size--)
     {
       lock_acquire(&fileSys_lock);
@@ -227,9 +129,7 @@ sys_read(int fd, void *buffer, unsigned size)
 
   struct open_file *user_file = sys_file(fd);
   if (user_file == NULL)
-  { 
-    return -1;  // fail
-  }
+    return -1;
   else
   {
     struct file *file = user_file->file;
@@ -243,7 +143,7 @@ sys_read(int fd, void *buffer, unsigned size)
 int 
 sys_write(int fd, const void *buffer, unsigned size)
 {
-  if (fd == 1) // write to the console
+  if (fd == 1)
   { 
     lock_acquire(&fileSys_lock);
     putbuf(buffer, size);    // write data from buffer into console
@@ -253,10 +153,8 @@ sys_write(int fd, const void *buffer, unsigned size)
 
 // else: write to a file
   struct open_file *file = sys_file(fd);
-  if (file == NULL)
-  { 
-    return -1;  // fail
-  }
+  if (file == NULL) // fail
+    return -1;  
   else
   {
     int i = 0;
@@ -268,21 +166,16 @@ sys_write(int fd, const void *buffer, unsigned size)
 }
 
 void
- sys_seek(struct intr_frame *f)
+sys_seek(struct intr_frame *f)
 {
   /* read the arguments starting from the address in f->esp , 
   while a return value, if it exists, has to be written to f->eax */
-
   // extract file descriptor and position 
   int fd = (int)(*((int *)f->esp + 1));
   unsigned position = (unsigned)(*((int *)f->esp + 2));
   struct open_file *file = sys_file(fd);
-  if (file == NULL)
-  { 
-    f->eax = -1; // fail
-  }
-  else
-  {
+  if (file == NULL) f->eax = -1;
+  else {
     lock_acquire(&fileSys_lock);
     file_seek(file->file, position);
     f->eax = position;
@@ -295,12 +188,8 @@ sys_tell(struct intr_frame *f)
 {
   int fd = (int)(*((int *)f->esp + 1));
   struct open_file *file = sys_file(fd);
-  if (file == NULL)
-  {
-    f->eax = -1;  // fail
-  }
-  else
-  {
+  if (file == NULL) f->eax = -1;
+  else {
     lock_acquire(&fileSys_lock);
     f->eax = file_tell(file->file);
     lock_release(&fileSys_lock);
@@ -311,26 +200,22 @@ int
 sys_close(int fd)
 {
   struct open_file *file = sys_file(fd);
-  if (file != NULL)
-  {
-    lock_acquire(&fileSys_lock);
-    file_close(file->file);
-    lock_release(&fileSys_lock);
-    list_remove(&file->elem);
-    return 1;
-  }
-  return -1;
+  if (file == NULL) return -1;
+  lock_acquire(&fileSys_lock);
+  file_close(file->file);
+  lock_release(&fileSys_lock);
+  list_remove(&file->elem);
+  return 1;
 }
 
 // added methods for wrapper system calls
 
-/* passing the status to exit */
+// passing the status to exit
 void wrapperExit(struct intr_frame *f)
 {
   int status = *((int *)f->esp + 1);
-  if (!is_user_vaddr(status))
+  if (!is_user_vaddr(status))   // not user valid address
   {
-    // not user virtual address, then exit with failure
     f->eax = -1;
     sys_exit(-1);
   }
@@ -348,8 +233,7 @@ void wrapperExec(struct intr_frame *f)
 /* checking validation in virtual memory, if valid pass it to sys_wait() */
 void wrapperWait(struct intr_frame *f)
 {
-  if (!valid_in_virtual_memory((int *)f->esp + 1))
-    sys_exit(-1);
+  if (!valid_user_space_adrress((int *)f->esp + 1)) sys_exit(-1);
   tid_t tid = *((int *)f->esp + 1);
   f->eax = sys_wait(tid);
 }
@@ -358,10 +242,7 @@ void wrapperWait(struct intr_frame *f)
 void wrapperCreate(struct intr_frame *f)
 {
   char *file = (char *)*((int *)f->esp + 1);
-  if (!valid_in_virtual_memory(file))
-  {
-    sys_exit(-1);
-  }
+  if (!valid_user_space_adrress(file)) sys_exit(-1);
   unsigned initial_size = (unsigned)*((int *)f->esp + 2);
   f->eax = sys_create(file, initial_size);
 }
@@ -370,10 +251,7 @@ void wrapperCreate(struct intr_frame *f)
 void wrapperRemove(struct intr_frame *f)
 {
   char *file = (char *)(*((int *)f->esp + 1));
-  if (!valid_in_virtual_memory(file))
-  {
-    sys_exit(-1);
-  }
+  if (!valid_user_space_adrress(file)) sys_exit(-1);
   f->eax = sys_remove(file);
 }
 
@@ -381,10 +259,8 @@ void wrapperRemove(struct intr_frame *f)
 void wrapperOpen(struct intr_frame *f)
 {
   char *file = (char *)(*((int *)f->esp + 1));
-  if (!valid_in_virtual_memory(file))
-  {
+  if (!valid_user_space_adrress(file))
     sys_exit(-1);
-  }
   f->eax = sys_open(file);
 }
 
@@ -394,9 +270,7 @@ void wrapperFilesize(struct intr_frame *f)
   int fd = (int)(*((int *)f->esp + 1));
   struct open_file *file = sys_file(fd);
   if (file == NULL)
-  { 
     f->eax = -1;
-  }
   else
   {
     lock_acquire(&fileSys_lock);
@@ -410,7 +284,7 @@ void wrapperRead(struct intr_frame *f)
 {
   int fd = (int)(*((int *)f->esp + 1));
   char *buffer = (char *)(*((int *)f->esp + 2));
-  if (fd == 1 || !valid_in_virtual_memory(buffer))
+  if (fd == 1 || !valid_user_space_adrress(buffer))
   { // fail if fd is 1 means (stdout) or in valid in virtual memory
     sys_exit(-1);
   }
@@ -423,8 +297,7 @@ void wrapperWrite(struct intr_frame *f)
 {
   int fd = *((int *)f->esp + 1);
   char *buffer = (char *)(*((int *)f->esp + 2));
-  if (fd == 0 || !valid_in_virtual_memory(buffer))
-  { // fail, if fd is 0 (stdin), or its virtual memory
+  if (fd == 0 || !valid_user_space_adrress(buffer)) { // fail, if fd is 0 (stdin), or its virtual memory
     sys_exit(-1);
   }
   unsigned size = (unsigned)(*((int *)f->esp + 3));
@@ -436,20 +309,28 @@ void wrapperClose(struct intr_frame *f)
 {
   int fd = (int)(*((int *)f->esp + 1));
   if (fd < 2) // fail, the fd is stdin or stdout
-  { 
     sys_exit(-1);
-  }
   f->eax = sys_close(fd);
 }
 
-// checking validation of virtual memory
-bool valid_in_virtual_memory(void *val)
+static void
+syscall_handler(struct intr_frame *f UNUSED)
 {
-  return val != NULL && is_user_vaddr(val) && pagedir_get_page(thread_current()->pagedir, val) != NULL;
-}
-
-// check validation of stack pointer
-bool valid_esp(struct intr_frame *f)
-{
-  return valid_in_virtual_memory((int *)f->esp) || ((*(int *)f->esp) < 0) || (*(int *)f->esp) > 12;
+  if (!valid_stack_ptr(f)) sys_exit(-1);
+  switch (*(int *)f->esp) {
+  case SYS_HALT: sys_halt();  break;
+  case SYS_EXIT: wrapperExit(f);  break;
+  case SYS_EXEC: wrapperExec(f);  break;
+  case SYS_WAIT: wrapperWait(f);  break;
+  case SYS_CREATE: wrapperCreate(f);  break;
+  case SYS_REMOVE: wrapperRemove(f);  break;
+  case SYS_OPEN: wrapperOpen(f);  break;  
+  case SYS_FILESIZE: wrapperFilesize(f);  break;
+  case SYS_READ: wrapperRead(f);  break;
+  case SYS_WRITE: wrapperWrite(f);  break;
+  case SYS_SEEK: sys_seek(f);   break;
+  case SYS_TELL: sys_tell(f);   break;
+  case SYS_CLOSE: wrapperClose(f);  break;
+  default: sys_exit(-1);  break;
+  }
 }

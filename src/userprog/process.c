@@ -21,8 +21,8 @@
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
-void push_stack_args(char *file_name, void **esp, char **save_ptr);
-struct thread* find_child_thread(tid_t tid);
+void push_args_to_stack(char *file_name, void **esp, char **save_ptr);
+//struct thread* find_child_thread(tid_t tid);
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -64,7 +64,7 @@ start_process (void *file_name_)
   //****************************phase_2**************************
   char *file_name_copy;
   char *save_ptr;
-  int name_length = strlen (file_name)+1;
+  int name_length = strlen (file_name) + 1;
   file_name_copy = malloc (name_length);
   strlcpy(file_name_copy, file_name, name_length);
   file_name_copy = strtok_r (file_name_copy, " ", &save_ptr);
@@ -86,7 +86,7 @@ start_process (void *file_name_)
   }
   else {
     list_push_back(&parent_thread->children_list, &child_thread->child_elem);
-    push_stack_args(file_name_copy, &if_.esp, &save_ptr);
+    push_args_to_stack(file_name_copy, &if_.esp, &save_ptr);
     sema_up(&parent_thread->parent_child_semaphore);  //parent wake up
     sema_down(&child_thread->parent_child_semaphore); //child sleep
   }
@@ -120,28 +120,20 @@ process_wait (tid_t tid )
 {
   struct thread *parent_thread = thread_current();
   parent_thread-> waiting_on = tid;
-  struct thread* child_thread = find_child_thread(tid);// Get child with given tid_t
-  if(child_thread == NULL) return -1;
-  // Wake up the child
-  sema_up(&child_thread->parent_child_semaphore); 
-  // Remove child from children list
-  list_remove(&child_thread->child_elem); 
-  sema_down(&parent_thread->wait_for_child); 
-  return parent_thread->child_status; 
-}
-
-struct thread*
-find_child_thread(tid_t tid) 
-{
-  struct thread* parent_thread = thread_current();
   struct list* children_list = &parent_thread->children_list;
   struct list_elem *element = list_begin(children_list);
-  while (element != list_end(children_list)) {
-    struct thread *curr_thread = list_entry(element, struct thread, child_elem);
+  struct thread* curr_thread;
+  while (element != list_end(children_list)) {    //will search in children_list for the tread with the required tid
+    curr_thread = list_entry(element, struct thread, child_elem);
+    if(curr_thread->tid == tid) {
+      sema_up(&curr_thread->parent_child_semaphore); //child wakes up
+      list_remove(&curr_thread->child_elem); 
+      sema_down(&parent_thread->wait_for_child);  //parent sleep
+      return parent_thread->child_status;
+    }
     element = list_next(element);
-    if(curr_thread->tid == tid) return curr_thread;
   }
-  return NULL;  //not found
+  return -1;
 }
 
 /* Free the current process's resources. */
@@ -152,11 +144,10 @@ process_exit (void)
   uint32_t *pd;
 
   struct thread *parent_thread = cur->parent;
-  // Parent is waiting for me
-  if (parent_thread != NULL && parent_thread->waiting_on == cur->tid) {
+  if (parent_thread != NULL && parent_thread->waiting_on == cur->tid) {// if parent is waiting for me
     parent_thread->waiting_on = -1; // reset waiting for tid
-    parent_thread->child_status = cur->exit_status; // Set parent to my exit status
-    parent_thread->child_success = false; // reset child creation success
+    parent_thread->child_status = cur->exit_status;
+    parent_thread->child_success = false; 
     sema_up(&parent_thread->wait_for_child); // Wake up parent
   }
 
@@ -165,24 +156,24 @@ process_exit (void)
   cur->parent = NULL;
 
   struct list* files_list = &cur->files_list;
-  // free all open files
   struct list_elem *curr = list_begin(files_list); 
-  while(curr != list_end(files_list)) {//****************************************************//
+  while(curr != list_end(files_list)) {// close and release all allocated files
     struct open_file* file = list_entry(curr, struct open_file , elem);
-    curr = list_next(curr);
     file_close(file->file);
     list_remove(&file->elem);
+    curr = list_next(curr);
     free(file);
   }
-  // Remove all children
+  // wake up all children
   struct list* children_list = &cur->children_list;
-  struct list_elem *curr_child = list_begin(children_list);
-  while(curr_child != list_end(children_list)) {
-    struct thread * child = list_entry(curr_child, struct thread , child_elem);
-    curr_child = list_next(curr_child);
-    child->parent = NULL;
-    sema_up(&child->parent_child_semaphore);
-    list_remove(&child->child_elem);
+  struct list_elem *curr_child_elem = list_begin(children_list);
+  struct thread *child_thread; 
+  while(curr_child_elem != list_end(children_list)) {
+    child_thread = list_entry(curr_child_elem, struct thread , child_elem);
+    child_thread->parent = NULL;
+    sema_up(&child_thread->parent_child_semaphore);
+    list_remove(&child_thread->child_elem);
+    curr_child_elem = list_next(curr_child_elem);
   }
 
   /* Destroy the current process's page directory and switch back
@@ -408,54 +399,53 @@ load (const char *file_name, void (**eip) (void), void **esp)
 /* load() helpers. */
 
 void
-push_stack_args(char *file_name, void **esp, char **save_ptr)
+push_args_to_stack(char *file_name, void **esp, char **save_ptr)
 {
-    void * stack_ptr = *esp;
-    int no_of_args=0;
-    char * ptr = file_name;
-    int total_size = 0;
+  void * stack_ptr = *esp;
+  int no_of_args=0;
+  char * ptr = file_name;
+  int total_size = 0;
 
-    //// push arguments to the stack 
-    while (ptr != NULL){
-        stack_ptr -= (strlen(ptr) + 1);
-        memcpy(stack_ptr, ptr, strlen(ptr) + 1);
-        total_size += strlen(ptr) + 1;
-        no_of_args++;
-        ptr = strtok_r(NULL, " ", save_ptr);
-    }
-    char * stack_args = stack_ptr;
-    //// push zeros as word-align 
-    int word_align = (4 - (total_size%4) )%4;
-    if(word_align != 0) {
-        stack_ptr -= word_align;
-        memset(stack_ptr, 0, word_align);
-    }
-    /* Push NULL pointer at end of args */
-    stack_ptr -= sizeof(char *);
-    memset(stack_ptr,0,1);
+  // push arguments to the stack 
+  while (ptr != NULL) {
+    stack_ptr -= strlen(ptr) + 1;
+    memcpy(stack_ptr, ptr, strlen(ptr) + 1);
+    total_size += strlen(ptr) + 1;
+    no_of_args++;
+    ptr = strtok_r(NULL, " ", save_ptr);
+  }
+  char * stack_args = stack_ptr;
+  // push zeros as word-align 
+  int word_align = (4 - (total_size%4) )%4;
+  if(word_align != 0) {
+    stack_ptr -= word_align;
+    memset(stack_ptr, 0, word_align);
+  }
+  // Push NULL pointer at end of args
+  stack_ptr -= sizeof(char *);
+  memset(stack_ptr, 0, 1);
 
-    /* Push addresses of args */
-    for(int j=no_of_args-1;j>=0;j--)
-    {
-        stack_ptr -=  sizeof(char *);
-        *(char**)stack_ptr = stack_args;
-        stack_args += (strlen(stack_args)+1);
-    }
+  // Push addresses of args
+  for(int j=no_of_args-1;j>=0;j--) {
+    stack_ptr -=  sizeof(char *);
+    *(char**)stack_ptr = stack_args;
+    stack_args += (strlen(stack_args)+1);
+  }
 
-   /// push the address of first address
-    char** address = (char**)stack_ptr;
-    stack_ptr -= sizeof(char**);
-    *(char***)stack_ptr = address;
+  // push the address of first address
+  char** address = (char**)stack_ptr;
+  stack_ptr -= sizeof(char**);
+  *(char***)stack_ptr = address;
 
-   //// push number of arguments 
-    stack_ptr -= sizeof(int);
-    *(int *)stack_ptr = no_of_args;
+  // push number of arguments 
+  stack_ptr -= sizeof(int);
+  *(int *)stack_ptr = no_of_args;
 
-    //// push NULL as a return address 
-    stack_ptr -= sizeof(int *);
-    *(int**)stack_ptr = 0;
-    *esp = stack_ptr;
-    return;
+  // push NULL as a return address 
+  stack_ptr -= sizeof(int *);
+  *(int**)stack_ptr = 0;
+  *esp = stack_ptr;
+  return;
 }
 
 static bool install_page (void *upage, void *kpage, bool writable);
